@@ -1,0 +1,97 @@
+GUIDA TECNICA MARCHIORI – INTEGRAZIONE TRACCIATI xPLUS
+
+Le procedure create [ITsp_TracInq] e [ITsp_TracPro], la prima relativa alla generazione del tracciato INQUILINI, la seconda del tracciato PROPRIETARI, sono molto simili, strutturalmente.
+In entrambi i casi si ricorre alla creazione di una tabella temporanea #TabContratti, che consente l’estrapolazione di quelle informazioni relative a Ricevute/Fatture che solamente nel documento CONTRATTI (o CONTRATTI NONCELLO) sono presenti, quali
+•	Attr1 = CTISA, il cui valore Val1 si riferisce al valore del flag Conteggia trattativa ISA S/N;
+•	Attr2 = TUISA, il cui valore Val2 si riferisce al valore del flag Trattativa unilaterale ISA S/N;
+•	Attr3 = VAISA, il cui valore Val3 si riferisce al valore del flag Valore affitto ISA;
+•	SedeEmissione, campo valorizzato solamente per la sede di Sacile nella quale è di interesse conoscere la distinzione tra SEDES (sede di Sacile, i cui contratti sono inseriti nel documento CONTRATTI) e SEDEN (sede di Noncello, i cui contratti sono inseriti nel documento CONTRATTI NONCELLO).
+Per quanto già esposto, tali campi verranno poi impiegati per la costruzione dei relativi tracciati di INQUILINI e PROPRIETARI.
+Dopodiché si inseriscono all’interno di una tabella temporanea globale ##OutputResult tutti i campi che dovranno poi essere riportati nei tracciati (avendo cura di valutare gli opportuni documenti di Ricevute/Fatture a seconda della sede considerate, considerando solamente quelle Ricevute/Fatture che presentano il flag Esportazione xPlus a S). Tralasciando le semplici selezioni dei campi richiesti, così come essi sono memorizzati nel database, vi sono alcuni campi che vengono opportunamente manipolati prima di essere stampati; di seguito se ne espone la descrizione:
+•	Il numero del documento viene calcolato come
+'P_'+RIGHT(M.MbaisCMbais,13) AS NumeroDocumento
+in cui, com’è intuibile, si effettua una concatenazione del codice effettivo del documento (ovvero la parte relativa a RIGHT(M.MbaisCMbais,13)) con la dicitura della sede di riferimento ('P_' nel caso di Pordenone, 'S_' di Sacile);
+•	La data di esportazione del tracciato viene calcolata come
+CONVERT(VARCHAR(10),M.MbaisTins,103) AS DataEsportazione
+in cui, semplicemente, la data in formato AAAA-MM-GG hh:mm:ss viene on convertita nel più leggibile formato GG/MM/AAAA tramite il parametro 103;
+•	I codici ABI e CAB banca vengono calcolati rispettivamente come
+CASE WHEN SUBSTRING(SogClienti.AsogDatIBANBE,5,5) IS NULL OR SUBSTRING(SogClienti.AsogDatIBANBE,5,5) = ''
+	THEN NULL
+	ELSE SUBSTRING(SogClienti.AsogDatIBANBE,5,5)
+	END AS CodiceABI
+
+CASE WHEN SUBSTRING(SogClienti.AsogDatIBANBE,10,5) IS NULL OR SUBSTRING(SogClienti.AsogDatIBANBE,10,5) = ''
+	THEN NULL
+	ELSE SUBSTRING(SogClienti.AsogDatIBANBE,10,5)
+	END AS CodiceCAB
+in cui, semplicemente, selezionando le opportune sottostringhe del codice IBAN, si controlla se esse sono NULL o vuote. In caso negativo, si procede alla selezione di tali codici, altrimenti si seleziona il valore NULL in modo tale da non occupare spazio inutile nel tracciato.
+•	Il valore progressivo del numero di “articoli” relativi alla singola ricevuta/fattura viene calcolato come
+ROW_NUMBER() OVER(PARTITION BY M.MbaisCSer, M.MbaisCMbais ORDER BY M.MbaisCSer ASC) AS NumeroRiga
+In cui tramite l’istruzione PARTITION BY M.MbaisCSer, M.MbaisCMbais, si provvede a partizionare il set di record prima tramite il seriale e poi tramite il codice del documento, in modo tale da non effettuare un conteggio globale relativo solamente ai seriali di tutti i documenti (come accade per il campo Progressivo), ma un conteggio che si azzera ad ogni nuovo documento e che conta solamente gli “articoli” inclusi nel documento stesso, ricominciando la numerazioni per il documento successivo.
+•	Per la visualizzazione del tipo di “articolo” del singolo documento si impiega l’istruzione
+ CASE WHEN ArtbCCodEsterno IS NOT NULL AND ArtbCCodEsterno <> ''
+		THEN ArtbCCodEsterno
+		ELSE ArtbCArtb
+END AS CodArtxPlus
+Nella quale si controlla se il campo apposito ArtbCCodEsterno è stato opportunamente valorizzato: in caso affermativo, si seleziona il valore di ArtbCCodEsterno, altrimenti si mantiene il codice riportato nel campo ArtbCArtb;
+Al fine di visualizzare la descrizione principale dell’articolo in Desc1, mentre i dettagli vengono riportati in Desc2, si effettuano le seguenti operazioni, le quali riguardano esclusivamente gli articoli 'CANONE AFFITTO' e 'SPESE CONDOMINIALI', i quali sono gli unici che presentano una eventuale descrizione secondaria:
+	CASE WHEN CHARINDEX('CANONE AFFITTO',RbaisDaart) > 0 THEN 
+			'CANONE AFFITTO'
+		ELSE CASE WHEN CHARINDEX('SPESE  CONDOMINIALI',RbaisDaart) > 0 THEN
+			'SPESE CONDOMINIALI'
+		ELSE
+			RbaisDaart
+		END
+	END AS Desc1,
+	CASE WHEN CHARINDEX('CANONE AFFITTO',RbaisDaart) > 0 THEN 
+			RIGHT(RbaisDaart,LEN(RbaisDaart)-LEN('CANONE AFFITTO'))
+		ELSE CASE WHEN CHARINDEX('SPESE  CONDOMINIALI',RbaisDaart) > 0 THEN
+			RIGHT(RbaisDaart,LEN(RbaisDaart)-LEN('SPESE  CONDOMINIALI'))
+		ELSE
+			''
+		END
+	END AS Desc2
+In poche parole, si tronca la descrizione dell’articolo e la si divide in due parti: la prima parte, più importante e significativa, si inserisce in Desc1; i dettagli della seconda parte, se presenti, vengono invece inseriti in Desc2;
+•	La selezione dell’anno di competenza avviene tramite l’istruzione
+YEAR(MbaisTins) AS APerCompetenza
+che provvede ad estrapolare l’anno dalla data del documento;
+•	La selezione, invece, del mese di competenza avviene come segue:
+	'M' + CASE WHEN MONTH(M.MbaisTins) < 10
+	THEN '0' + CONVERT(VARCHAR(2),MONTH(M.MbaisTins))
+	ELSE CONVERT(VARCHAR(2),MONTH(M.MbaisTins))
+	END AS TPerCompetenza
+in cui si effettua una concatenazione del carattere 'M' ad indicare il mese, con il numero, da 1 a 12, del mese di riferimento, premurandosi si fare in modo che tale numero presenti sempre due cifre (sicché anche il mese di gennaio, per esempio, verrà denotato con il codice M01);
+Non da ultimo, l’indicazione relativa al fatto che il soggetto considerato sia o meno un SOGGETTO A RITENUTA, avviene tramite l’istruzione
+CASE WHEN T.SogRit IS NULL THEN 'N' ELSE T.SogRit END AS SogRit
+con la quale si verifica se l’attributo SOGRIT è impostato o meno: se è impostato viene visualizzato il valore associato, altrimenti si desume che il soggetto non sia un soggetto a ritenuta.
+Nel caso della generazione del tracciato INQUILINI, le operazioni della StoredProcedure relativa terminano con la stampa dei dati selezionati all’interno di file .TXT denominati Tracciato_Inquilini_PN.txt nel caso di Pordenone e Tracciato_Inquilini_SA.txt nel caso di Sacile, tramite il comando bcp già preimpostato. In modo analogo anche il tracciato PROPRIETARI verrà generato tramite il medesimo comando, il quale produrrà il file Tracciato_Proprietari_PN.txt nel caso di Pordenone e Tracciato_Proprietari_SA.txt nel caso di Sacile; tuttavia, prima di trascrivere le informazioni sui relativi file, nel caso del tracciato Proprietari è necessario generare anche le righe dei compensi dei proprietari dovuti ai canoni di affitto pagati dagli Inquilini. 
+Per prima cosa, quindi, si genera la tabella dei compensi, la quale è sempre una tabella temporanea, denominata #TabCompensi: i compensi vengono calcolati sommando il valore dei canoni di affitto  di tutte le proprietà in possesso del singolo Proprietario e tale somma viene moltiplicata per la percentuale di compenso specifica del Proprietario, memorizzata come gruppo statistico COM. Una volta creata una tabella in cui ad ogni proprietario viene associato il compenso totale relativo,  tali dati vengono inseriti nella tabella ##OutputResult al termine di ogni set di dati relativi al medesimo Proprietario, in base alle seguenti regole:
+CAMPO	VALORE
+CAUSALE DOCUMENTO      	C
+NUMERO DOCUMENTO	COMP_CodiceProprietario
+DATA 	Data del campo “A Data” della maschera di lancio della procedura in UP
+SEDE EMISSIONE 	 La stessa sede dei record precedenti
+TIPO CLIENTE        	C
+CODICE CLIENTE	-
+CODICE CONTROPARTE	Codice Proprietario
+VALORE AFFITTO ISA	0
+CONTEGGIA TRATTATIVA ISA  	-
+TRATTATIVA UNILATERALE ISA	-
+QUANTITA’	1
+PREZZO UNITARIO	Valore calcolato del compenso
+SEGNO MOVIMENTO	+
+ANNO PERIODO COMPETENZA	Anno Data del campo “A Data” della maschera di lancio della procedura in UP
+TIPO PERIODO DI COMPETENZA	M+ Mese Data del campo “A Data” della maschera di lancio della procedura in UP (a due cifre 01, 02…12)
+CODICE IVA	come i record precedenti
+SOGGETTO A RITENUTA	-
+
+Al fine di sistemare, però, la numerazione del campo Progressivo e NumeroRiga della tabella ##OutputResult, si procede anche ad aggiornare il numero di riga come segue
+NumeroRiga=CASE WHEN (SELECT MAX(MaxProg)+1 FROM #TabCompensi WHERE (MaxProg+1)<Progressivo) <> Progressivo
+	THEN Progressivo-(SELECT MAX(MaxProg)+1 FROM #TabCompensi WHERE (MaxProg+1)<Progressivo)+1
+	ELSE Progressivo END
+In cui, semplicemente, si fa in modo che la riga dei compensi sia contrassegnata con il valore dato dalla somma più uno del numero di “articoli” che fanno riferimento al singolo Proprietario: se quest’ultimo presenta due stabili a cui sono associati due canoni di affitto, ma nel complesso sono sette gli “articoli” totali, allora il numero di riga del compenso sarà otto.
+Dopodiché si procede nuovamente ad ordinare l’insieme dei record del tracciato, andando a correggere eventuali sovrapposizioni del valore  Progressivo che si sono venute a creare nel corso dell’aggiornamento. Solamente a questo punto si potrà richiamare il comando bcp per generare i tracciati, e quindi i rispettivi file .TXT relativi ai PROPRIETARI.
+OSSERVAZIONE: Ovviamente, al fine di funzionare propriamente, ciascuna delle due procedure necessita due parametri di filtraggio
+1.	DaData – il limite inferiore dell’intervallo temporale nel quale considerare le Ricevute/Fatture da esportare nel tracciato;
+2.	AData – il limite superiore dell’intervallo temporale nel quale considerare le Ricevute/Fatture da esportare nel tracciato;
+Inoltre è necessario anche specificare il percorso nel quale salvare i file .TXT, ossia i tracciati che vengono generati.
