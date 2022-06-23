@@ -1,0 +1,107 @@
+DISENIA: CIT202200254 - INVIO MAIL FDE IN CC A RESP.COMM CLIENTE
+L’attività esecutiva relativa alla commessa in itinere si è svolta seguendo i seguenti passaggi:
+1.	Dal momento che si necessitava di memorizzare gli indirizzi e-mail dei Corrispondenti interni (d’ora in poi denotati con la dicitura CorrispInt) all’interno della maschera Gruppi statistici, è stato creato un nuovo campo in IdeUP denotato con RgrsXEmailCorrispInt di tipo String e di lunghezza 500 all’interno della tabella GruppiStatisticiRighe.
+
+2.	Dopodiché è stata aggiunta, tramite DevUp, una nuova colonna (appunto la colonna relativa all’email del corrispondente interno) all’interno della maschera Gruppi statistici in modo da potervi visualizzare ed inserire l’indirizzo e-mail associato al valore del gruppo statistico. Nel file S_grstat.xml è stata impostata la griglia come segue:
+
+<Columns>
+          <Column name="RgrsCRgrs" type="Text" headerText="Codice" width="60"/>
+          <Column name="RgrsDRgrs" type="Text" headerText="Descrizione" 
+     width="160" />
+<!-- Enrico 23/06/2022 - CIT202200254 - INVIO MAIL FDE IN CC A
+RESP.COMM CLIENTE -->
+    <Column name="RgrsXEmailCorrispInt" type="Text" headerText="Email 
+     Corrisp. Int." width="500" />
+    […]
+<Columns/>
+Mentre il campo RgrsXEmailCorrispInt è stato così impostato
+
+<Field name="RgrsDRgrs" type="String" maxLength="40" bound="true" />
+<!-- Enrico 23/06/2022 - CIT202200254 - INVIO MAIL FDE IN CC A RESP.
+COMM CLIENTE -->
+      <Field name="RgrsXEmailCorrispInt" type="String" 
+maxLength="500" bound="true" />
+[…]
+
+3.	Dovendo visualizzare ed impiegare il campo relativo all’email all’interno del documento Fattura Clienti Estero [FCE] è stato necessario procedere alla creazione di un nuovo campo in IdeUP denotato con MbaisXEmailCorrispInt di tipo String e di lunghezza 500 all’interno della tabella IstBaseStOpMaster.
+
+4.	Il campo MbaisXEmailCorrispInt doveva essere anche inserito all’interno del documento Fattura Clienti Estero [FCE] come campo personalizzato (più accessibile rispetto ad un attributo o ad un gruppo statistico), sicché sono stati modificati/creati i due seguenti file:
+
+a.	Il file StruttureOp.xml collocato all’interno della cartella [“C:\Program Files (x86)\NetPortal\UP\Tools\StopDes\xml_ute”] è stato personalizzato in modo tale da comprendere il nuovo campo MbaisXEmailCorrispInt, inserito nella sezione 'Campi InfoTeam', come mostrato di seguito:
+
+
+    […]
+<!-- ENRICO - INIZIO PERS. CIT/22/254 20/06/2022 -->
+		<Atomo>
+              <Nome>Email CorrispInt</Nome>
+              <Obbligatorio>false</Obbligatorio>
+              <Proprieta Nome="Script di Default" Tipo="DB:TabScriptStOp" 
+   Valore=""/>
+              <Campo>MBAISXEMAILCORRISPINT</Campo>
+</Atomo>
+            <!-- ENRICO - FINE PERS. CIT/22/254 20/06/202 -->
+    </Testa>
+
+b.	Il file Email_CorrispInt.xml collocato all’interno della cartella [“C:\Program Files (x86)\NetPortal\UP\Tools\StopDes\xml_ute\teste\Campi_InfoTeam”], contenente le specifiche del nuovo campo creato, come illustrato di seguito:
+<Atomo>
+  <StOp>
+    <Interfaccia>
+      <EDIT>
+        <NAME>MbaisXEmailCorrispInt</NAME>
+        <StOpDesLABEL>Email Corrisp. Int.</StOpDesLABEL>
+        <StOpDesWLABEL>230</StOpDesWLABEL>
+        <StOpDesDISABLED/>
+        <DBBOUND/>
+        <MAXCHAR>500</MAXCHAR>
+        <StOpDesW>150</StOpDesW>        
+      </EDIT>
+      <StOpDesBR />
+    </Interfaccia>
+    <Application>
+    </Application>
+    <Join>
+    </Join>
+  </StOp>
+  <Cont>
+  </Cont>
+</Atomo>
+5.	La fase di personalizzazione prosegue in StOpDesigner, all’interno del quale si modifica il documento Fattura Clienti Estero [FCE] aggiungendo il gruppo statistico CorrispInt e il nuovo campo personalizzato Email CorrispInt appena creato al passo precedente.
+
+6.	Non da ultimo, si procede alla realizzazione dello script che al variare del valore del gruppo statistico CorrispInt procede a modificare opportunamente il campo Email CorrispInt, impiegando il codice seguente:
+
+Function OnChange(Nome,Valore)
+[…]
+	'enrico 17/06/22 aggiunta caricamento indirizzo e-mail quando si specifica il corrispondente interno
+	If (ucase(Nome) = ucase("codLkKgsisCRvgrs_CorrispInt")) then
+		call CompilaEmail(this.getValue("codLkKgsisCRvgrs_CorrispInt"))
+	end if
+End Function
+
+'enrico 17/06/22 aggiunta caricamento indirizzo e-mail quando si specifica il corrispondente interno
+Function CompilaEmail(ValoreGruppoStatistico)
+	'MsgBox Globals.GetEnvironment("RgrsXIndEmail")
+	Dim conn : Set conn = CreateObject("ADODB.Connection")
+	conn.Open globals.GetEnvironment("DsnAPP"),"grupposga","agsoppurg"
+	
+	'Creazione oggetto comando
+	Dim rs:	Set rs = CreateObject("ADODB.RecordSet")
+	rs.CursorType = 0 'adOpenForwardOnly
+	rs.LockType = 1 'adLockReadOnly
+	
+	Dim strSQL : strSQL = "SELECT RgrsXEmailCorrispInt FROM GruppiStatisticiRighe WITH (NOLOCK) WHERE RgrsCRgrs = '" & ValoreGruppoStatistico & "'"
+	
+	Call rs.Open(strSQL, conn)	
+	if not rs.Eof then
+		rs.MoveFirst()
+		Dim email
+		email = rs("RgrsXEmailCorrispInt")
+		Call this.changeValue("MbaisXEmailCorrispInt",email)
+	end if
+			
+	Set rs = Nothing
+	Call conn.Close()
+	Set conn = Nothing
+End Function
+
+7.	Per terminare la personalizzazione si procede ad impostare i parametri di stampa del report FEC-MAIL-ING opportunamente: in particolare, si inserisce come destinatario dell’e-mail l’indirizzo impostato nel campo $MbaisXEmailCorrispInt.
+
