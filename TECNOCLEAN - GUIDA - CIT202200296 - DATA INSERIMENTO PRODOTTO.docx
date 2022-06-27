@@ -1,0 +1,178 @@
+TECNOCLEAN: CIT202200296 - DATA INSERIMENTO PRODOTTO
+L’attività esecutiva relativa alla commessa in itinere si è svolta seguendo i seguenti passaggi:
+1.	Creazione dell’attributo DINS, ovverosia Data Inserimento, atto a memorizzare la data di inserimento di un prodotto all’interno dell’anagrafica:
+ 
+
+2.	Creazione della StoredProcedure ITsp_AggiungiDataInserimentoProdotto atta all’inserimento all’interno del database del valore della data di inserimento di un prodotto, effettuando un vero e proprio inserimento qualora tale attributo non fosse presente, oppure solamente un aggiornamento nell’ipotesi in cui vi fosse già un’istanza di tale attributo associata al prodotto:
+ITsp_AggiungiDataInserimentoProdotto (@parArtbCSer INT, @Risultato INT OUTPUT) AS
+
+BEGIN
+	-- SET NOCOUNT ON added to prevent extra result sets from
+	-- interfering with SELECT statements.
+	SET NOCOUNT ON;
+
+    SELECT ArtbCArtb, AttrCAttr, VlatCVlat
+	FROM ArticoliBase
+	INNER JOIN ArticoliAttributi ON ArtaCSerArtb = ArtbCSer
+	INNER JOIN Attributi ON ArtaCSerAttr = AttrCSer
+	INNER JOIN ValoriAttributo ON ArtaCSerVlat = VlatCSer
+	WHERE ArtbCSer = @parArtbCSer AND AttrCAttr = 'DINS';
+
+	IF(@@ROWCOUNT = 0)
+	BEGIN 
+		DECLARE @varArtaCSer INT
+		DECLARE @varVlatCSer INT
+		DECLARE @prig INT
+		DECLARE @varDIns DATETIME
+
+		EXEC ProtocolloSerialTabellaGetNext 'ArticoliAttributi', 1, 
+     @varArtaCSer OUTPUT
+		EXEC ProtocolloSerialTabellaGetNext 'ValoriAttributo',   1,
+     @varVlatCSer OUTPUT
+		
+		SELECT @prig = MAX(VlatPrig) FROM ValoriAttributo
+WHERE VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
+		IF @prig is null SET @prig = 1 
+		ELSE SET @prig = @prig+1
+
+		SET @varDIns = FORMAT (GETDATE(), 'dd/MM/yyyy HH:mm:ss')
+
+		SELECT @varArtaCSer, @varVlatCSer, @prig, @varDIns
+
+		INSERT INTO [dbo].[ArticoliAttributi]
+				   ([ArtaCSer]
+				   ,[ArtaCSerArtb]
+				   ,[ArtaCSerAttr]
+				   ,[ArtaCSerVlat]
+				   ,[ArtaDValAttr]
+				   ,[ArtaPRig]
+				   ,[ArtaDValAtt]
+				   ,[ArtaTValAtt]
+				   ,[ArtaNValAtt]
+				   ,[ArtaIAttrCSer]
+				   ,[ArtaIAttrCAzione]
+				   ,[ArtaFAddStopCSer]
+				   ,[ArtaFAddStopCAzione]
+				   ,[ArtaCRTpCon])
+			 VALUES
+				   (@varArtaCSer
+				   ,@parArtbCSer
+				   ,(SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
+				   ,@varVlatCSer
+				   ,NULL
+				   ,1
+				   ,''
+				   ,@varDIns
+				   ,0
+				   ,226
+				   ,'N'
+				   ,1796
+				   ,'N'
+				   ,0)
+		
+
+		INSERT INTO [dbo].[ValoriAttributo]
+				([VlatCSer]
+				,[VlatPrig]
+				,[VlatCSerAttr]
+				,[VlatCVlat]
+				,[VlatDVlat]
+				,[VlatDBreveVlat]
+				,[VlatDBitMap]
+				,[VlatAsiaId])
+			VALUES
+				(@varVlatCSer
+				,@prig
+				,(SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
+				,@varDIns
+				,'Data inserimento articolo'
+				,''
+				,''
+				,0)
+		END
+	ELSE
+		BEGIN
+			SET @varDIns = GETDATE()
+
+			UPDATE [dbo].[ValoriAttributo]
+			   SET [VlatCVlat] = @varDIns
+			 WHERE VlatCSer = (SELECT ArtaCSerVlat FROM ArticoliAttributi 
+      WHERE ArtaCSerAttr = @parArtbCSer)
+		END
+END
+
+3.	Creazione dello Script IArticoliBase.vbs che effettua l’inserimento di tale solamente nei casi opportuni, richiesti dal cliente
+a.	all'atto dell’inserimento vero e proprio di un nuovo prodotto;
+b.	a seguito dell’aggiornamento della tipologia di prodotto da ‘OLD’ o ‘OLD-R’ ad un’altra tipologia.
+Lo Script consta dell’aggiunta di tre metodi:
+'enrico 27/06/22 CIT202200296 - DATA INSERIMENTO PRODOTTO
+Function OnQuerySave()
+	On Error Resume Next
+	OnQuerySave=0
+	
+	if (this.GetCollection().GetCurrent().status = 3) then
+		Call caricaDataIns(this.GetValue("ArtbCSer"))
+	else
+		Call cambioTipoArticoloDaOld(this.GetValue("ArtbCSer"))
+	end if
+End Function
+
+'enrico 27/06/22 CIT202200296 - DATA INSERIMENTO PRODOTTO
+Function cambioTipoArticoloDaOld(SerialeArticolo)
+	Dim conn : Set conn = CreateObject("ADODB.Connection")
+	conn.Open globals.GetEnvironment("DsnAPP"),"grupposga","agsoppurg"
+	
+	'Creazione oggetto comando
+	Dim rs:	Set rs = CreateObject("ADODB.RecordSet")
+	rs.CursorType = 0 'adOpenForwardOnly
+	rs.LockType = 1 'adLockReadOnly
+	
+	Dim strSQL : strSQL = "SELECT TparCTpar FROM ArticoliBase WITH (NOLOCK) 
+INNER JOIN TabTipoArticolo ON tparCRTabc =  artbCRtabc WHERE ArtbCSer = " & SerialeArticolo
+	
+	Call rs.Open(strSQL, conn)	
+	if not rs.Eof then
+		rs.MoveFirst()
+		Dim tipoArt
+		tipoArt = rs("TparCTpar")
+		if(StrComp(tipoArt, this.GetValue("codLookupTipoArticolo"), vbTextCompar) <> 0 AND (StrComp(tipoArt, "OLD", vbTextCompar) = 0 OR StrComp(tipoArt, "OLD-R", vbTextCompar) = 0)) then
+			Call caricaDataIns(SerialeArticolo)
+		end if
+	end if
+			
+	Set rs = Nothing
+	Call conn.Close()
+	Set conn = Nothing
+End Function
+
+'enrico 27/06/22 CIT202200296 - DATA INSERIMENTO PRODOTTO
+Function caricaDataIns(SerialeArticolo)
+	'Creazione connessione con Database UP
+	Dim conn
+	Set conn = CreateObject("ADODB.Connection")
+	conn.Open globals.GetEnvironment("DsnAPP"),"grupposga","agsoppurg"
+	
+	'Creazione oggetto comando
+	Dim nIdSdi
+	Dim oCmd
+	Set oCmd = CreateObject("ADODB.Command")
+
+	'Creazione comando con Stored Procedure
+	Set oCmd.ActiveConnection = conn
+	oCmd.CommandType = 4		'Stored Procedures
+	oCmd.CommandText = "ITsp_AggiungiDataInserimentoProdotto"
+
+	'Specifica parametro di input
+	oCmd.Parameters.Refresh
+	oCmd.Parameters(1).Value = SerialeArticolo
+	
+	'Esecuzione del comando
+	oCmd.Execute()
+
+	'Chiusura connessione e comando
+	Set oCmd = Nothing
+	conn.Close
+	Set conn = Nothing
+End Function
+
+
