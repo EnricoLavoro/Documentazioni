@@ -4,12 +4,26 @@ L’attività esecutiva relativa alla commessa in itinere si è svolta seguendo 
  
 
 2.	Creazione della StoredProcedure ITsp_AggiungiDataInserimentoProdotto atta all’inserimento all’interno del database del valore della data di inserimento di un prodotto, effettuando un vero e proprio inserimento qualora tale attributo non fosse presente, oppure solamente un aggiornamento nell’ipotesi in cui vi fosse già un’istanza di tale attributo associata al prodotto:
-ITsp_AggiungiDataInserimentoProdotto (@parArtbCSer INT, @Risultato INT OUTPUT) AS
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- =============================================
+-- Author:	  Enrico Piccin
+-- Create date: 27 Giugno 2022
+-- Description: CIT202200296 - DATA INSERIMENTO PRODOTTO
+-- =============================================
+ALTER PROCEDURE ITsp_AggiungiDataInserimentoProdotto (@parArtbCSer INT, @Risultato INT OUTPUT) AS
 
 BEGIN
 	-- SET NOCOUNT ON added to prevent extra result sets from
 	-- interfering with SELECT statements.
 	SET NOCOUNT ON;
+
+	DECLARE @varArtaCSer INT
+	DECLARE @varVlatCSer INT
+	DECLARE @prig INT
+	DECLARE @varDIns DATETIME
 
     SELECT ArtbCArtb, AttrCAttr, VlatCVlat
 	FROM ArticoliBase
@@ -20,24 +34,14 @@ BEGIN
 
 	IF(@@ROWCOUNT = 0)
 	BEGIN 
-		DECLARE @varArtaCSer INT
-		DECLARE @varVlatCSer INT
-		DECLARE @prig INT
-		DECLARE @varDIns DATETIME
-
-		EXEC ProtocolloSerialTabellaGetNext 'ArticoliAttributi', 1, 
-     @varArtaCSer OUTPUT
-		EXEC ProtocolloSerialTabellaGetNext 'ValoriAttributo',   1,
-     @varVlatCSer OUTPUT
+		EXEC ProtocolloSerialTabellaGetNext 'ArticoliAttributi', 1 , @varArtaCSer OUTPUT
+		EXEC ProtocolloSerialTabellaGetNext 'ValoriAttributo',   1 , @varVlatCSer OUTPUT
 		
-		SELECT @prig = MAX(VlatPrig) FROM ValoriAttributo
-WHERE VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
+		SELECT @prig = MAX(VlatPrig) from ValoriAttributo where VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 		IF @prig is null SET @prig = 1 
 		ELSE SET @prig = @prig+1
 
-		SET @varDIns = FORMAT (GETDATE(), 'dd/MM/yyyy HH:mm:ss')
-
-		SELECT @varArtaCSer, @varVlatCSer, @prig, @varDIns
+		SET @varDIns = GETDATE()
 
 		INSERT INTO [dbo].[ArticoliAttributi]
 				   ([ArtaCSer]
@@ -59,10 +63,10 @@ WHERE VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 				   ,@parArtbCSer
 				   ,(SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 				   ,@varVlatCSer
-				   ,NULL
+				   ,''
 				   ,1
 				   ,''
-				   ,@varDIns
+				   ,FORMAT (@varDIns, 'dd/MM/yyyy HH:mm:ss')
 				   ,0
 				   ,226
 				   ,'N'
@@ -84,7 +88,7 @@ WHERE VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 				(@varVlatCSer
 				,@prig
 				,(SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
-				,@varDIns
+				,FORMAT (@varDIns, 'dd/MM/yyyy HH:mm:ss')
 				,'Data inserimento articolo'
 				,''
 				,''
@@ -95,9 +99,12 @@ WHERE VlatCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 			SET @varDIns = GETDATE()
 
 			UPDATE [dbo].[ValoriAttributo]
-			   SET [VlatCVlat] = @varDIns
-			 WHERE VlatCSer = (SELECT ArtaCSerVlat FROM ArticoliAttributi 
-      WHERE ArtaCSerAttr = @parArtbCSer)
+			   SET [VlatCVlat] = FORMAT (@varDIns, 'dd/MM/yyyy HH:mm:ss')
+			 WHERE VlatCSer = (SELECT ArtaCSerVlat FROM ArticoliAttributi WHERE ArtaCSerArtb = @parArtbCSer AND ArtaCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS'))
+
+			 UPDATE [dbo].[ArticoliAttributi]
+			   SET [ArtaTValAtt] = FORMAT (@varDIns, 'dd/MM/yyyy HH:mm:ss')
+			 WHERE ArtaCSerArtb = @parArtbCSer AND ArtaCSerAttr = (SELECT AttrCSer FROM Attributi WHERE AttrCAttr = 'DINS')
 		END
 END
 
@@ -127,15 +134,20 @@ Function cambioTipoArticoloDaOld(SerialeArticolo)
 	rs.CursorType = 0 'adOpenForwardOnly
 	rs.LockType = 1 'adLockReadOnly
 	
-	Dim strSQL : strSQL = "SELECT TparCTpar FROM ArticoliBase WITH (NOLOCK) 
-INNER JOIN TabTipoArticolo ON tparCRTabc =  artbCRtabc WHERE ArtbCSer = " & SerialeArticolo
+	Dim strSQL : strSQL = "SELECT TparCTpar FROM ArticoliBase WITH (NOLOCK) INNER JOIN TabTipoArticolo ON tparCRTabc = artbCRtabc WHERE ArtbCSer = " & SerialeArticolo
 	
 	Call rs.Open(strSQL, conn)	
 	if not rs.Eof then
 		rs.MoveFirst()
 		Dim tipoArt
 		tipoArt = rs("TparCTpar")
-		if(StrComp(tipoArt, this.GetValue("codLookupTipoArticolo"), vbTextCompar) <> 0 AND (StrComp(tipoArt, "OLD", vbTextCompar) = 0 OR StrComp(tipoArt, "OLD-R", vbTextCompar) = 0)) then
+		if((StrComp(this.GetValue("codLookupTipoArticolo"), "OLD", 
+vbTextCompar) <> 0 AND    
+StrComp(this.GetValue("codLookupTipoArticolo"), "OLD-R",  
+vbTextCompar) <> 0) AND StrComp(tipoArt, 
+this.GetValue("codLookupTipoArticolo"), vbTextCompar) <> 0 AND 
+(StrComp(tipoArt, "OLD", vbTextCompar) = 0 OR StrComp(tipoArt, 
+"OLD-R", vbTextCompar) = 0)) then
 			Call caricaDataIns(SerialeArticolo)
 		end if
 	end if
@@ -174,5 +186,3 @@ Function caricaDataIns(SerialeArticolo)
 	conn.Close
 	Set conn = Nothing
 End Function
-
-
